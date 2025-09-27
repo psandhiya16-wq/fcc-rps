@@ -1,0 +1,127 @@
+import random
+
+# Return the move that beats m
+def _beat(m):
+    return {'R': 'P', 'P': 'S', 'S': 'R'}[m]
+
+def player(prev_play, opponent_history = []):
+    """
+    prev_play : opponent's last move ('' for the first call in a match)
+    opponent_history : mutable list used to store opponent history across calls in a match
+    returns : 'R', 'P', or 'S'
+    """
+
+    # Reset history at the start of a match
+    if prev_play == "":
+        opponent_history.clear()
+        # initial random warm start to avoid being predictable
+        return random.choice(['R','P','S'])
+
+    # Record opponent's previous move
+    if prev_play in ('R','P','S'):
+        opponent_history.append(prev_play)
+
+    n = len(opponent_history)
+
+    # --- Strategy 1: Markov-style prediction (look for most frequent continuation) ---
+    def markov_predict(k_max=4):
+        # Build dictionary mapping patterns -> continuation counts
+        # Use decreasing k so longer contexts are preferred
+        for k in range(min(k_max, n), 0, -1):
+            pattern = tuple(opponent_history[-k:])
+            counts = {}
+            # scan history for occurrences of pattern followed by a move
+            for i in range(len(opponent_history)-k):
+                if tuple(opponent_history[i:i+k]) == pattern:
+                    next_move = opponent_history[i+k]
+                    counts[next_move] = counts.get(next_move, 0) + 1
+            if counts:
+                # return most common continuation
+                predicted = max(counts.items(), key=lambda x: x[1])[0]
+                return predicted
+        return None
+
+    # --- Strategy 2: Simple frequency analysis ---
+    def freq_predict():
+        if n == 0:
+            return None
+        counts = {'R':0,'P':0,'S':0}
+        for m in opponent_history:
+            counts[m] += 1
+        # predict opponent will play their most frequent move
+        predicted = max(counts.items(), key=lambda x: x[1])[0]
+        return predicted, counts
+
+    # --- Strategy 3: Last-move repetition assumption ---
+    def last_predict():
+        return opponent_history[-1] if n>0 else None
+
+    # --- Strategy 4: Cycle detection (detect repeating short pattern) ---
+    def cycle_predict(max_period=5):
+        # Try periods 1..max_period, prefer small periods that match tail
+        for p in range(1, min(max_period, n)+1):
+            pattern = opponent_history[-p:]
+            # check if pattern repeats at least twice before the tail
+            repeats = True
+            for i in range(2, min(5, n//p)+1):
+                start = -i*p
+                if opponent_history[start:start+p] != pattern:
+                    repeats = False
+                    break
+            if repeats and pattern:
+                # predict the next element in cycle (wrap)
+                idx = n % p
+                return pattern[idx]
+        return None
+
+    # Try Markov prediction first (best generalization)
+    predicted = markov_predict(k_max=4)
+    if predicted:
+        return _beat(predicted)
+
+    # Next try cycle detection
+    predicted = cycle_predict(max_period=6)
+    if predicted:
+        return _beat(predicted)
+
+    # Next use frequency if there's a clear bias
+    freq_res = freq_predict()
+    if freq_res:
+        predicted_move, counts = freq_res
+        total = counts['R'] + counts['P'] + counts['S']
+        # If the most frequent move is reasonably dominant, exploit it
+        most_count = counts[predicted_move]
+        if most_count / total >= 0.40:   # threshold adjustable
+            return _beat(predicted_move)
+
+    # Try last-move repetition (if opponent often repeats)
+    predicted = last_predict()
+    if predicted:
+        # only use this if the last move has shown up repeatedly in recent window
+        recent = opponent_history[-6:]
+        if recent.count(predicted) / max(1, len(recent)) >= 0.5:
+            return _beat(predicted)
+
+    # Otherwise fallback to a weighted random choice biased by opponent frequencies
+    # This gives small exploitation while keeping unpredictability
+    counts = {'R':0,'P':0,'S':0}
+    for m in opponent_history:
+        counts[m] += 1
+    # if no data, pure random
+    if n == 0:
+        return random.choice(['R','P','S'])
+
+    # Build probability distribution to play the move that beats opponent's more likely moves
+    total = sum(counts.values()) + 1e-9
+    # weights for picking which opponent move to beat more often
+    weights = {m: counts[m]/total for m in counts}
+    # choose an opponent move with these weights, then play the beating move
+    choices = []
+    for m, w in weights.items():
+        # multiply weight to integer count for sampling list
+        k = max(1, int(round(w * 20)))
+        choices += [m] * k
+    if not choices:
+        return random.choice(['R','P','S'])
+    chosen_opponent_move = random.choice(choices)
+    return _beat(chosen_opponent_move)

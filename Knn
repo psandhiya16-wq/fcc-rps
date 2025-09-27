@@ -1,0 +1,99 @@
+# Book Recommender using K-Nearest Neighbors
+# Paste this into your Colab/Notebook cell and run.
+
+import os
+import pandas as pd
+import numpy as np
+from sklearn.neighbors import NearestNeighbors
+
+# ---- 1) LOAD DATA (use existing DataFrames if present, otherwise try common CSV names) ----
+# Expected columns: users: user id; books: isbn/title; ratings: user id, isbn, rating
+if 'ratings' in globals() and 'books' in globals() and 'users' in globals():
+    # The notebook already imported the dataset
+    print("Using preloaded DataFrames: ratings, books, users")
+else:
+    # Try common filenames used with Book-Crossings dataset
+    possible_files = [
+        ('BX-Book-Ratings.csv', 'ratings'),
+        ('BX-Books.csv', 'books'),
+        ('BX-Users.csv', 'users'),
+        ('book_ratings.csv', 'ratings'),
+        ('books.csv', 'books'),
+        ('users.csv', 'users'),
+        ('ratings.csv', 'ratings'),
+        ('BX-Book-Ratings.csv', 'ratings')
+    ]
+    found = {}
+    for fname, kind in possible_files:
+        if os.path.exists(fname) and kind not in found:
+            try:
+                # Book-Crossings uses semicolon ; as separators and may have quotes; try both delimiters
+                df = pd.read_csv(fname, sep=';', encoding='latin-1', engine='python')
+            except Exception:
+                try:
+                    df = pd.read_csv(fname, encoding='latin-1')
+                except Exception as e:
+                    print(f"Failed to read {fname}: {e}")
+                    continue
+            found[kind] = df
+            print(f"Loaded {fname} as {kind} ({df.shape})")
+    # assign if found
+    ratings = found.get('ratings', None)
+    books = found.get('books', None)
+    users = found.get('users', None)
+
+# Basic existence check
+if 'ratings' not in globals() or ratings is None:
+    raise RuntimeError("ratings DataFrame not found. Either pre-import the dataset or upload the CSV and retry.")
+
+if 'books' not in globals() or books is None:
+    # Try to create minimal books DataFrame if ratings has 'ISBN' and maybe 'Title' columns
+    if 'ISBN' in ratings.columns and 'Book-Title' in ratings.columns:
+        # sometimes ratings contains title (rare) — not likely; else we need books file
+        pass
+    else:
+        raise RuntimeError("books DataFrame not found. Please upload the books CSV (e.g., 'BX-Books.csv') or provide a DataFrame named 'books'.")
+
+# Normalize column names (attempt common variants)
+ratings_cols = {c.lower(): c for c in ratings.columns}
+books_cols   = {c.lower(): c for c in books.columns}
+
+# map common names
+user_col = ratings_cols.get('user-id', ratings_cols.get('userid', ratings_cols.get('user id', ratings_cols.get('user', None))))
+isbn_col = ratings_cols.get('isbn', ratings_cols.get('isbn13', ratings_cols.get('book-isbn', None)))
+rating_col = ratings_cols.get('book-rating', ratings_cols.get('rating', None))
+if user_col is None or isbn_col is None or rating_col is None:
+    raise RuntimeError(f"Could not find user/isbn/rating columns in ratings. Found: {list(ratings.columns)}")
+
+# For books, find isbn and title columns
+books_isbn_col = books_cols.get('isbn', books_cols.get('isbn13', books_cols.get('book-isbn', None)))
+books_title_col = books_cols.get('title', books_cols.get('book-title', books_cols.get('book title', None)))
+if books_isbn_col is None or books_title_col is None:
+    raise RuntimeError(f"Could not find isbn/title columns in books. Found: {list(books.columns)}")
+
+# Rename to standard
+ratings = ratings.rename(columns={user_col: 'user_id', isbn_col: 'isbn', rating_col: 'rating'})
+books = books.rename(columns={books_isbn_col: 'isbn', books_title_col: 'title'})
+
+# Ensure isbn/title types are strings
+ratings['isbn'] = ratings['isbn'].astype(str)
+books['isbn'] = books['isbn'].astype(str)
+books['title'] = books['title'].astype(str)
+
+# ---- 2) FILTER: remove users with <200 ratings and books with <100 ratings ----
+# Count ratings per user and per book
+user_counts = ratings['user_id'].value_counts()
+book_counts = ratings['isbn'].value_counts()
+
+users_keep = user_counts[user_counts >= 200].index
+books_keep = book_counts[book_counts >= 100].index
+
+print(f"Users before: {ratings['user_id'].nunique()}, after filter (>=200 ratings): {len(users_keep)}")
+print(f"Books before: {ratings['isbn'].nunique()}, after filter (>=100 ratings): {len(books_keep)}")
+
+# Filter ratings
+ratings_filtered = ratings[ratings['user_id'].isin(users_keep) & ratings['isbn'].isin(books_keep)].copy()
+
+print(f"Ratings shape after filtering: {ratings_filtered.shape}")
+
+# If filtering removed all

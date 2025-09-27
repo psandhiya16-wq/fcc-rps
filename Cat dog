@@ -1,0 +1,129 @@
+# Cat vs Dog Image Classifier - FreeCodeCamp Project
+# Full code merged in one file (cells 3 to 11)
+
+import os
+import matplotlib.pyplot as plt
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+
+# =====================
+# Setup paths & constants
+# =====================
+BATCH_SIZE = 32
+IMG_HEIGHT = 150
+IMG_WIDTH = 150
+
+base_dir = '/content/cats_and_dogs'   # adjust if dataset unzips elsewhere
+train_dir = os.path.join(base_dir, 'train')
+validation_dir = os.path.join(base_dir, 'validation')
+test_dir = os.path.join(base_dir, 'test')
+
+# =====================
+# Image Generators
+# =====================
+train_image_gen_basic = ImageDataGenerator(rescale=1./255)
+validation_image_gen = ImageDataGenerator(rescale=1./255)
+test_image_gen_basic = ImageDataGenerator(rescale=1./255)
+
+train_data_gen = train_image_gen_basic.flow_from_directory(
+    train_dir,
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='binary'
+)
+
+validation_data_gen = validation_image_gen.flow_from_directory(
+    validation_dir,
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='binary'
+)
+
+# Fix test_dir (if no subfolder)
+if len(next(os.walk(test_dir))[1]) == 0:
+    tmp_sub = os.path.join(test_dir, 'unknown')
+    os.makedirs(tmp_sub, exist_ok=True)
+    for fname in os.listdir(test_dir):
+        src = os.path.join(test_dir, fname)
+        dst = os.path.join(tmp_sub, fname)
+        if os.path.isfile(src):
+            os.rename(src, dst)
+
+test_data_gen = test_image_gen_basic.flow_from_directory(
+    test_dir,
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=1,
+    class_mode=None,
+    shuffle=False
+)
+
+# =====================
+# Plot helper
+# =====================
+def plotImages(images_arr, probs=None, labels=None, figsize=(12,6)):
+    fig, axes = plt.subplots(1, len(images_arr), figsize=figsize)
+    if len(images_arr) == 1:
+        axes = [axes]
+    for img, ax, i in zip(images_arr, axes, range(len(images_arr))):
+        ax.imshow(img)
+        title = ''
+        if probs is not None:
+            title += f'P(dog)={probs[i]*100:.1f}%\n'
+        if labels is not None:
+            title += f'True: {labels[i]}'
+        ax.axis('off')
+        ax.set_title(title)
+    plt.show()
+
+# Quick check
+imgs, lbls = next(train_data_gen)
+plotImages(imgs[:5])
+
+# =====================
+# Augmented training generator
+# =====================
+train_image_generator = ImageDataGenerator(
+    rescale=1./255,
+    rotation_range=40,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.2,
+    zoom_range=0.2,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
+
+train_data_gen = train_image_generator.flow_from_directory(
+    train_dir,
+    target_size=(IMG_HEIGHT, IMG_WIDTH),
+    batch_size=BATCH_SIZE,
+    class_mode='binary'
+)
+
+# Visualize augmentation
+sample_batch, _ = next(train_data_gen)
+plotImages([sample_batch[i] for i in range(5)])
+
+# =====================
+# Build CNN Model
+# =====================
+model = Sequential([
+    Conv2D(32, (3,3), activation='relu', input_shape=(IMG_HEIGHT, IMG_WIDTH, 3)),
+    MaxPooling2D(2,2),
+
+    Conv2D(64, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+
+    Conv2D(128, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+
+    Conv2D(128, (3,3), activation='relu'),
+    MaxPooling2D(2,2),
+
+    Flatten(),
+    Dropout(0.5),
+    Dense(512, activation='relu'),
+    Dense(1, activation='sigmoid')
